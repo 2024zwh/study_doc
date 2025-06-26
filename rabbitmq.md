@@ -156,7 +156,7 @@ img
 
 **架构图**
 
-![rabbitMQ架构](C:\Users\admin\Desktop\学习\images\rabbitMQ架构.png)
+![rabbitMQ架构](images/rabbitMQ架构.png)
 
 详细介绍：
 
@@ -174,7 +174,7 @@ img
 
 **运行流程**
 
-#### ![](C:\Users\admin\Desktop\学习\images\MQ运行流程.png)
+#### ![](images/MQ运行流程.png)
 
 
 
@@ -541,8 +541,376 @@ channel.start_consuming()
 ##### 5.4 死信队列的应用场景
 
 - **消息重试**：死信队列的消费者可对消息进行重试（如3次），若仍失败则转人工处理
-
 - **日志分析**：收集死信消息用于分析失败原因（如参数错误、服务不可用）
 - **延迟任务**：结合TTL和死信队列实现延迟队列（如订单超时未支付自动取消）
 - **业务补偿**：死信消息触发补偿逻辑（如退款、通知用户）
 
+### 六、消息格式
+
+> 消息分为消息头和body两部分
+
+#### 6.1 消息头
+
+```
+import pika
+import time
+
+# 生产者
+connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+
+# 声明队列
+channel.queue_declare(queue='headers_queue', durable=True)
+
+# 设置消息头
+properties = pika.BasicProperties(
+    content_type='application/json', # 消息内容的类型
+    content_encoding='utf-8', # 消息内容格式
+    delivery_mode=2,  # 持久化消息
+    priority=5,       # 消息优先级
+    timestamp=int(time.time()),  # 时间戳
+    message_id='msg-12345',      # 消息 ID
+    correlation_id='req-7890',   # 关联 ID
+    reply_to='response_queue',   # 回调队列
+    expiration='60000',          # 消息过期时间（毫秒）
+    user_id='admin',             # 用户 ID
+    app_id='my_app'              # 应用 ID
+)
+
+# 发送消息
+message = "Hello, RabbitMQ Headers!"
+channel.basic_publish(
+    exchange='',
+    routing_key='headers_queue',
+    body=message,
+    properties=properties
+)
+
+print(" [x] Sent message with headers")
+connection.close()
+```
+
+#### 6.2 消息正文
+
+消息正文是二进制数据（`bytes`），实际内容由生产者和消费者约定。常见的格式包括：
+
+- **纯文本**（`text/plain`）
+- **JSON**（`application/json`）
+- **XML**（`application/xml`）
+- **二进制数据**（如图片、文件）
+- **自定义序列化格式**（如 Protobuf、MsgPack）
+
+```
+import pika
+import json
+
+# 生产者
+connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+
+message = {
+    "id": 1,
+    "name": "张三",
+    "email": "zhangsan@example.com"
+}
+
+channel.basic_publish(
+    exchange='',
+    routing_key='task_queue',
+    body=json.dumps(message),
+    properties=pika.BasicProperties(
+        content_type='application/json',
+        delivery_mode=2  # 持久化消息
+    )
+)
+
+print(" [x] Sent JSON message:", message)
+connection.close()
+```
+
+
+
+### 七、TTL过期时间
+
+##### 7.1 TTL 的定义
+
+ TTL 表示消息或队列的最大存活时间（单位：毫秒）。
+
+- **消息 TTL**：单条消息的存活时间。
+- **队列 TTL**：队列中所有消息的默认存活时间。
+
+##### 7.2 TTL 的作用
+
+- 避免消息在队列中堆积，节省资源。
+- 实现业务逻辑中的“超时处理”（如订单超时取消、缓存过期等）。
+- 与死信队列（DLQ）结合，实现延迟队列功能。
+
+##### 7.3 注意
+
+- 消息的 TTL 仅在队列中生效。
+- 如果两者都进行了设置，以时间短的为准
+- 如果消息未被消费且超过 TTL，会被标记为“死信”（Dead Message），并根据配置删除或转移到死信队列
+
+##### 7.4 实际应用场景
+
+1. **订单超时取消**：
+   - 用户下单后未支付，30 分钟后自动取消订单。
+   - **实现**：通过 TTL 设置消息的存活时间为 30 分钟，过期后触发死信队列处理取消逻辑。
+2. **缓存失效**：
+   - 缓存数据在一定时间后自动过期，通过 TTL 控制缓存生命周期。
+3. **任务超时处理**：
+   - 网络请求超时未响应时，通过 TTL 触发重试或告警。
+4. **定时通知**：
+   - 会议开始前 30 分钟发送提醒通知（结合 TTL + DLQ 实现延迟队列）。
+
+### 八、优先级设置
+
+#### 8.1 概述
+
+> RabbitMQ 的优先级队列允许为消息分配不同的优先级，确保高优先级的消息优先被消费
+
+#### 8.2 关键点
+
+- 声明队列的时候使用x-max-priority 设置
+
+  > 范围最大为0-255,  使用时数字越大优先级越高，推荐10 设置过大会影响性能, 
+  >
+  > 一旦设置就无法更改
+
+- 在发布消息时，通过 `priority` 字段设置优先级
+
+- 消费者的处理方式
+
+  - 无需特殊处理，自动接收优先级高的消息
+
+- 队列的排序
+
+  - 队列内部按优先级排序，优先级高的消息在前面
+  - 同一优先级的消息，还是FIFO（先进先出）
+
+#### 8.3 配置步骤
+
+- 声明队列设置优先级范围
+
+  ```python
+  import pika
+  
+  # 创建连接和通道
+  connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+  channel = connection.channel()
+  
+  # 声明一个支持优先级的队列，最大优先级设为10
+  queue_name = 'priority_queue'
+  args = {
+      'x-max-priority': 10  # 设置最大优先级为10
+  }
+  channel.queue_declare(queue=queue_name, arguments=args)
+  ```
+
+- 发送消息的时候配置优先级
+
+  ```python
+  import pika
+  
+  # 创建连接和通道
+  connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+  channel = connection.channel()
+  
+  # 声明一个支持优先级的队列，最大优先级设为10
+  queue_name = 'priority_queue'
+  args = {
+      'x-max-priority': 10  # 设置最大优先级为10
+  }
+  channel.queue_declare(queue=queue_name, arguments=args)
+  
+  # 发送不同优先级的消息
+  def send_message(priority, message_body):
+      properties = pika.BasicProperties(priority=priority)
+      channel.basic_publish(
+          exchange='',
+          routing_key=queue_name,
+          body=message_body,
+          properties=properties
+      )
+      print(f"Sent: {message_body} (Priority: {priority})")
+  
+  # 示例：发送两条消息，一条高优先级，一条低优先级
+  send_message(10, "Urgent Task")
+  send_message(1, "Normal Task")
+  
+  connection.close()
+  ```
+
+  
+
+#### 8.4 注意事项
+
+- 性能开销：
+  - 维护优先级排序会增加内存和 CPU 开销，尤其在消息量大的场景。
+  - 优先级范围越大（如 `0-255`），排序复杂度越高。
+- 低优先级消息风险：
+  - 若高优先级消息持续涌入，低优先级消息可能长期无法被处理。
+  - 解决方案：
+    - **时间衰减机制（Aging）**：为低优先级消息设置等待时间，超时后提升优先级。
+    - **动态调整**：根据业务需求动态修改消息优先级。
+    - **容量限制**：限制队列中高优先级消息的数量，避免低优先级消息被淹没。
+
+##### 8.5 实际场景应用
+
+> 需要优先处理某些关键任务（如紧急订单、系统告警、VIP用户请求等）
+
+### 九、延迟队列
+
+#### 9.1 概述
+
+> 延迟队列，即消息进入队列后不会立即被消费，只有到达指定时间后，才会被消费。在RabbitMQ中并未提供延迟队列功能，但是可以使用：TTL+死信队列 组合实现延迟队列的效果 ，通过安装插件rabbitmq_delayed_message_exchange 两种方式实现
+
+#### 9.2 插件实现
+
+- **安装插件**
+
+  ```
+  # 下载插件
+  wget https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/releases/latest/download/rabbitmq_delayed_message_exchange-3.19.0.ez
+  
+  # 启用插件
+  rabbitmq-plugins enable rabbitmq_delayed_message_exchange
+  ```
+
+- 生产者代码
+
+  ```python
+  import pika
+  import json
+  
+  connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+  channel = connection.channel()
+  
+  # 声明延迟交换器（类型为 x-delayed-message）
+  channel.exchange_declare(
+      exchange='delayed_exchange',
+      exchange_type='x-delayed-message',
+      arguments={'x-delayed-type': 'direct'}
+  )
+  
+  message = {
+      'content': 'Hello, this is a delayed message!',
+      'timestamp': '2023-10-01T12:00:00Z'
+  }
+  
+  # 发送消息并设置延迟时间（单位：毫秒）
+  channel.basic_publish(
+      exchange='delayed_exchange',
+      routing_key='test',
+      body=json.dumps(message),
+      properties=pika.BasicProperties(
+          headers={'x-delay': 5000}  # 延迟5秒
+      )
+  )
+  
+  print(" [x] Sent delayed message")
+  connection.close()
+  ```
+
+- 消费者代码
+
+  ```python
+  import pika
+  import json
+  
+  def callback(ch, method, properties, body):
+      print(" [x] Received:", json.loads(body.decode()))
+  
+  connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+  channel = connection.channel()
+  
+  # 声明队列并绑定到延迟交换器
+  channel.queue_declare(queue='delayed_queue')
+  channel.queue_bind(
+      exchange='delayed_exchange',
+      queue='delayed_queue',
+      routing_key='test'
+  )
+  
+  channel.basic_consume(
+      queue='delayed_queue',
+      on_message_callback=callback,
+      auto_ack=True
+  )
+  
+  print(' [*] Waiting for messages. To exit press CTRL+C')
+  channel.start_consuming()
+  ```
+
+#### 9.3 使用TTL+死信队列实现
+
+- **生产者声明配置**
+
+  ```python
+  import pika
+  import json
+  import time
+  
+  connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+  channel = connection.channel()
+  
+  # 声明死信交换器和队列
+  channel.exchange_declare(exchange='dlx_exchange', exchange_type='direct')
+  channel.queue_declare(queue='dlx_queue')
+  
+  # 声明普通交换器和队列
+  channel.exchange_declare(exchange='normal_exchange', exchange_type='direct')
+  channel.queue_declare(queue='normal_queue', arguments={
+      'x-message-ttl': 5000,  # 5秒TTL
+      'x-dead-letter-exchange': 'dlx_exchange'  # 死信交换器
+  })
+  
+  message = {
+      'content': 'Hello, this is a TTL-based delayed message!',
+      'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+  }
+  
+  channel.basic_publish(
+      exchange='normal_exchange',
+      routing_key='normal_key',
+      body=json.dumps(message)
+  )
+  
+  print(" [x] Sent TTL-based delayed message")
+  connection.close()
+  ```
+
+- **消费者从死信队列中获取消息**
+
+  ```python
+  import pika
+  import json
+  
+  def callback(ch, method, properties, body):
+      print(" [x] Received (DLQ):", json.loads(body.decode()))
+  
+  connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+  channel = connection.channel()
+  
+  # 绑定死信交换器和队列
+  channel.queue_bind(
+      exchange='dlx_exchange',
+      queue='dlx_queue',
+      routing_key='dlx_key'
+  )
+  
+  channel.basic_consume(
+      queue='dlx_queue',
+      on_message_callback=callback,
+      auto_ack=True
+  )
+  
+  print(' [*] Waiting for DLQ messages. To exit press CTRL+C')
+  channel.start_consuming()
+  ```
+
+#### 9.4 使用场景
+
+- 订单超时关闭， 下单超时30分钟未支付
+- 预约与定时事件
+- 秒杀，或者倒计时活动
