@@ -540,7 +540,7 @@ null 可以设置索引，但是在count时候是统计不到的 并且在NOT in
 
 3.副本会读取relay log（中继日志）将数据写入到副本中
 
-![主从复制](images\主从复制.png)
+![主从复制](images/主从复制.png)
 
 ##### binlog复制格式
 
