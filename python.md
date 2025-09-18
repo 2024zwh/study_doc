@@ -1669,7 +1669,6 @@ if __name__ == "__main__":
 
 > 闭包是一种的特殊函数，它不仅能够记住并访问其定义时的作用域中的变量，而且即使在其外部函数执行完毕后，这些变量的值仍然可以被保持在内存中。
 >
-> 一般用来做装饰器
 
 **示例：**
 
@@ -1684,11 +1683,89 @@ print(inner(2))
 # 输出3
 ```
 
-### 2.垃圾回收
+### 2.装饰器
+
+> 装饰器是利用闭包原理实现的，主要用来再不休修改原代码的情况下，给类或者函数添加新的功能
+
+**函数的装饰器**
+
+> 获取函数的运行时间
+
+```
+import time
+def warp(func):
+    def inner(*args, **kw):
+        start = time.time()
+        res = func(*args,**kw)
+        print(f"{func.__name__}运行时间{time.time() - start}")
+        return res
+    return inner
+
+@warp
+def test(a, b):
+    time.sleep(1)
+    return a + b
+
+test(1,1)
+
+"""
+test运行时间1.0014243125915527
+"""
+
+```
+
+**类的装饰器**
+
+> 用装饰器实现单例模式
+
+```python
+import time
+from concurrent.futures.thread import ThreadPoolExecutor
+from threading import Lock
+
+def single(cls):
+    tmp_data = {}
+    lock = Lock()
+    def inner(*arg, **kw):
+        with lock:
+            if cls not in tmp_data:
+                tmp_data[cls] = cls(*arg, **kw)
+            return tmp_data[cls]
+    return inner
+
+
+
+@single
+class TestObject:
+    pass
+
+
+def thread_test(name):
+    time.sleep(0.2)
+    print(name)
+    print(id(TestObject()))
+
+
+with ThreadPoolExecutor(5) as pool:
+    results = pool.map(thread_test, [i for i in range(10)])
+    for res in results:
+        pass
+
+
+
+"""
+2501798317968
+2501798317968
+"""
+```
+
+
+
+### 3.垃圾回收
 
 > python垃圾回收机制，是通过引用计数，分代回收和标记清除这三种机制处理的
 
-#### 2.1 引用计数
+#### 3.1 引用计数
 
 > 会给每个对象进行引用计数，当引用计数为0的时候，会自动回收对象， 但是无法处理循环引用的对象
 
@@ -1727,7 +1804,7 @@ del a # 最后引用计数数量
 
 ```
 
-#### 2.2 分代回收
+#### 3.2 分代回收
 
 > 把对象分为三代，每次触发回收机制，没有回收掉就往后移动，这样做的好处是减少扫描次数，减少性能影响
 
@@ -1763,7 +1840,7 @@ import gc
 print(gc.get_threshold())  # 默认输出 (700, 10, 10)
 ```
 
-#### 2.3 标记清除
+#### 3.3 标记清除
 
 > 通过标记那些对象可达，然后对所有为被标记的对象进行回收，解决循环引用的问题
 
@@ -1794,7 +1871,7 @@ print("触发垃圾回收后的不可达对象数量:", gc.collect())
 
 
 
-#### **2.4 gc常用方法**
+#### **3.4 gc常用方法**
 
 ##### **1. `gc` 模块的方法**
 
@@ -1928,3 +2005,8 @@ print("触发垃圾回收后的不可达对象数量:", gc.collect())
     for stat in top_stats:
         print(stat)
     ```
+
+
+
+
+
