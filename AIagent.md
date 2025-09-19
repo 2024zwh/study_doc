@@ -837,5 +837,417 @@ chain = (lambda x: x.upper()) | model
 
 对于大多数简单到中等复杂度的链，**应优先使用 LCEL**。当应用需要复杂状态或控制流时，再考虑升级到 **LangGraph**。
 
+#### 2.5 工具调用（Tool Calling）
 
+##### 2.5.1 概述
+
+**工具调用**（Tool Calling）是 LangChain 的核心能力之一，它允许语言模型（LLM）不仅仅是生成文本，还能**直接与外部系统交互**，例如调用 API、查询数据库、执行计算等。
+
+通过工具调用，AI 应用可以具备“行动”能力，从被动回答问题转变为**主动执行任务**，是构建智能 Agent 的关键技术。
+
+> 💡 **提示**：工具调用有时也被称为“函数调用”（Function Calling），在 LangChain 中这两个术语可互换使用。
+
+##### 2.5.2 核心概念：工具调用的四个步骤
+
+工具调用遵循一个清晰的工作流程：
+
+###### 1. 工具创建（Tool Creation）
+
+使用 `@tool` 装饰器将普通 Python 函数定义为一个“工具”。工具包含函数逻辑和其输入/输出的结构化描述。
+
+**创建一个乘法工具**
+
+```
+from langchain_core.tools import tool
+
+@tool
+def multiply(a: int, b: int) -> int:
+    """将 a 和 b 相乘。"""
+    return a * b
+```
+
+###### 2. 工具绑定（Tool Binding）
+
+将创建好的工具绑定到支持工具调用的模型上。使用 `.bind_tools()` 方法告诉模型“你可以调用这些工具”。
+
+```
+from langchain_community.chat_models import ChatOllama
+
+# 初始化支持工具调用的模型（如 llama3.1）
+model = ChatOllama(model="llama3.1", base_url="http://localhost:11434")
+
+# 绑定工具
+model_with_tools = model.bind_tools([multiply])
+```
+
+> ⚠️ 注意：并非所有模型都支持工具调用。Ollama 的 `llama3.1` 支持基本的工具调用功能。
+
+###### 3. 工具调用（Tool Calling）
+
+向模型发送请求。模型会根据输入内容**自主决定**是否调用工具，以及调用哪个工具。
+
+```
+# 不相关的输入 → 模型不会调用工具
+result1 = model_with_tools.invoke("你好！")
+print(result1.content)  # 输出： "你好！有什么我可以帮忙的吗？"
+
+# 相关的输入 → 模型决定调用 multiply 工具
+result2 = model_with_tools.invoke("2 乘以 3 是多少？")
+```
+
+------
+
+###### 4. 工具执行（Tool Execution）
+
+如果模型决定调用工具，其响应中会包含 `tool_calls` 属性。你可以提取这些调用并执行对应的工具函数。
+
+```
+# 检查是否包含工具调用
+if result2.tool_calls:
+    for tool_call in result2.tool_calls:
+        print("模型请求调用工具:", tool_call)
+        # 输出示例：
+        # {'name': 'multiply', 'args': {'a': 2, 'b': 3}, 'id': 'call_abc123', 'type': 'tool_call'}
+
+        # 执行工具
+        tool_output = multiply.invoke(tool_call["args"])
+        print("工具执行结果:", tool_output)  # 输出：6
+```
+
+------
+
+##### 2.5.3 关键特性与高级用法
+
+###### ✅ `tool_calls` 属性
+
+模型响应（`AIMessage`）中的 `tool_calls` 是一个列表，每个元素包含：
+
+- `name`: 工具名称
+- `args`: 调用参数（字典）
+- `id`: 调用唯一 ID
+- `type`: 类型（通常是 `tool_call`）
+
+###### ✅ 强制模型调用工具（`tool_choice`）
+
+你可以强制模型必须调用某个特定工具，或从给定列表中选择一个工具。
+
+```
+# 强制必须调用 multiply 工具
+model_force = model.bind_tools([multiply], tool_choice="multiply")
+```
+
+这在构建确定性行为的 Agent 时非常有用。
+
+###### ✅ 工具的最佳实践
+
+| 建议                       | 说明                                                  |
+| -------------------------- | ----------------------------------------------------- |
+| **工具职责单一**           | 简单、功能明确的工具更容易被模型正确使用。            |
+| **提供清晰的名称和描述**   | 工具的函数名和 docstring 是模型理解其用途的关键。     |
+| **避免工具过多**           | 从大量工具中选择会增加模型的决策难度。                |
+| **使用支持工具调用的模型** | 经过微调的模型（如 llama3.1）在工具调用方面表现更好。 |
+
+------
+
+###### 与 LangGraph 集成
+
+在实际应用中，通常不会手动检查 `tool_calls`。**LangGraph** 提供了 `ToolNode` 等预构建组件，可以自动代表用户执行工具调用，大大简化开发。
+
+```
+# 伪代码示例（LangGraph 中的 ToolNode）
+from langgraph.prebuilt import ToolNode
+
+tool_node = ToolNode([multiply])  # 自动执行 multiply 工具
+```
+
+------
+
+##### 2.5.4 总结
+
+**工具调用** 是让 AI 模型“动起来”的关键机制：
+
+- 使用 `@tool` 创建工具。
+- 使用 `.bind_tools()` 将工具绑定到模型。
+- 模型根据输入决定是否调用工具。
+- 响应中的 `tool_calls` 包含了执行所需的所有信息。
+- 支持强制调用、流式传输、错误处理等高级功能。
+
+它是构建**智能代理**（Agent）、**自动化工作流**和**增强型问答系统**的基础。结合 `LCEL` 和 `LangGraph`，你可以构建出功能强大、可维护的生产级 AI 应用。
+
+
+
+#### 2.6 检索器（Retrievers）
+
+###### 2.6.1 什么是检索器（Retriever）？
+
+**检索器（Retriever）** 是 LangChain 中用于从数据源中**获取相关文档**的组件。它是一个接口，定义了一个简单的方法：
+
+```
+def invoke(query: str) -> List[Document]
+```
+
+即：输入一个查询字符串，返回一组相关的 `Document` 对象。
+
+> ✅ 与 `PromptTemplate`、`LLM` 并列，是构建 RAG（检索增强生成）系统的核心组件之一。
+
+------
+
+##### 2.6.2 Retriever vs LLM：关键区别
+
+| 特性         | Retriever                              | LLM                                     |
+| ------------ | -------------------------------------- | --------------------------------------- |
+| 输入         | `str` 或 `dict`                        | `str` / `PromptValue` / `List[Message]` |
+| 输出         | `List[Document]`                       | `str` / `ChatResult`                    |
+| 接口方法     | `.invoke()` / `.batch()` / `.stream()` | 同左                                    |
+| 是否可缓存   | ✅ 是                                   | ✅ 是                                    |
+| 是否支持流式 | ❌ 否（返回完整列表）                   | ✅ 是                                    |
+
+> 📌 提示：Retriever 的输出通常作为上下文输入给 LLM，用于生成最终回答。
+
+##### 2.6.3 核心方法（Standard Interface）
+
+所有 Retriever 都实现以下方法：
+
+| 方法              | 说明                            |
+| ----------------- | ------------------------------- |
+| `.invoke(query)`  | 单次检索，返回 `List[Document]` |
+| `.batch(queries)` | 批量检索多个查询                |
+| `.stream(query)`  | ❌ 不支持流式（整体返回）        |
+|                   |                                 |
+
+```
+docs = retriever.invoke("量子计算是什么？")
+print(len(docs))  # 输出：4
+```
+
+##### 2.6.4 常见检索器类型
+
+LangChain 提供了多种内置 Retriever，适用于不同场景：
+
+###### 1. 向量存储检索器（VectorStoreRetriever）
+
+最常用的类型，基于向量相似度检索。
+
+```
+from langchain_community.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+
+vectorstore = Chroma(embedding_function=OpenAIEmbeddings())
+retriever = vectorstore.as_retriever()  # 返回 Retriever 接口
+```
+
+✅ 支持参数：
+
+- `k`: 返回文档数
+- `search_type`: `similarity`（默认）、`mmr`（最大边际相关性）、`similarity_score_threshold`
+
+```
+retriever = vectorstore.as_retriever(
+    search_type="similarity_score_threshold",
+    search_kwargs={"score_threshold": 0.75}
+)
+```
+
+------
+
+###### 2. BM25Retriever（关键词匹配）
+
+基于 BM25 算法进行**关键词检索**，适合精确匹配术语。
+
+```
+from langchain.retrievers import BM25Retriever
+
+docs = ["猫喜欢爬树", "狗喜欢追球", "鸟会飞"]
+retriever = BM25Retriever.from_texts(docs, k=1)
+
+result = retriever.invoke("猫喜欢什么？")
+# 返回最匹配的文档
+```
+
+> ✅ 优点：无需嵌入模型，适合专业术语检索
+>  ❌ 缺点：无法理解语义
+
+------
+
+###### 3. EnsembleRetriever（混合检索）
+
+组合多个检索器的结果，提升召回率。
+
+```
+from langchain.retrievers import EnsembleRetriever
+
+ensemble = EnsembleRetriever(
+    retrievers=[vectorstore_retriever, bm25_retriever],
+    weights=[0.5, 0.5]
+)
+
+result = ensemble.invoke("动物的习性")
+```
+
+> 使用 **RRF（倒数排序融合）** 算法对结果去重并排序。
+
+###### 4. ContextualCompressionRetriever（上下文压缩）
+
+先检索，再用 LLM **压缩或过滤**不相关的内容。
+
+```
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
+
+compressor = LLMChainExtractor.from_llm(llm)
+compression_retriever = ContextualCompressionRetriever(
+    base_compressor=compressor,
+    base_retriever=vectorstore_retriever
+)
+```
+
+> ✅ 优点：减少噪声，提升生成质量
+>  ⚠️ 缺点：增加延迟和成本
+
+###### 5. ParentDocumentRetriever（父子文档检索）
+
+适用于长文档切分场景：**小块检索 + 大块生成**。
+
+流程：
+
+1. 将文档切分为小 chunk（用于检索）
+2. 检索到小 chunk 后，返回其所属的“父文档”（大块）
+
+```
+from langchain.retrievers import ParentDocumentRetriever
+from langchain_community.vectorstores import Chroma
+from langchain_community.storage import InMemoryStore
+
+retriever = ParentDocumentRetriever(
+    vectorstore=Chroma(...),
+    docstore=InMemoryStore(),
+    child_splitter=RecursiveCharacterTextSplitter(chunk_size=200),
+    parent_splitter=RecursiveCharacterTextSplitter(chunk_size=1000),
+)
+```
+
+> ✅ 适用：书籍、长报告、法律条文等长文本 RAG
+
+###### 6. TimeWeightedVectorStoreRetriever（时间加权）
+
+为文档添加时间衰减因子，**越新的文档权重越高**。
+
+```
+from langchain.retrievers import TimeWeightedVectorStoreRetriever
+
+retriever = TimeWeightedVectorStoreRetriever(
+    vectorstore=vectorstore,
+    decay_rate=0.01,
+    k=2
+)
+```
+
+> ✅ 适用：记忆系统、用户行为追踪、新闻推荐
+
+###### 7. KNNRetriever（K近邻）
+
+直接在 DataFrame 或 NumPy 数组上做 KNN 检索。
+
+```
+from langchain.retrievers import KNNRetriever
+import pandas as pd
+
+df = pd.DataFrame({"text": ["机器学习", "深度学习"], "embedding": [[1,2], [3,4]]})
+retriever = KNNRetriever(df=df, text_column="text", embedding_column="embedding")
+```
+
+> ✅ 适合结构化数据 + 嵌入混合检索
+
+##### 2.6.5 高级功能
+
+###### 1. 多查询生成（Multi-Query Retriever）
+
+用 LLM 为原始查询生成多个变体，提升召回率。
+
+```
+from langchain.retrievers import MultiQueryRetriever
+
+retriever = MultiQueryRetriever.from_llm(
+    retriever=vectorstore.as_retriever(),
+    llm=ChatOpenAI()
+)
+
+# 用户问：“气候变化的影响”
+# 可能生成：“全球变暖的后果”、“气候变暖对生态的影响”等
+```
+
+###### 2. 自定义 Retriever
+
+继承 `BaseRetriever` 实现自定义逻辑：
+
+```
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+
+class MyRetriever(BaseRetriever):
+    def _get_relevant_documents(self, query):
+        return [Document(page_content="自定义结果")]
+
+retriever = MyRetriever()
+```
+
+##### 2.6.6 使用场景建议
+
+| 场景         | 推荐 Retriever                             |
+| ------------ | ------------------------------------------ |
+| 通用语义检索 | `VectorStoreRetriever`                     |
+| 专业术语匹配 | `BM25Retriever`                            |
+| 提高召回率   | `EnsembleRetriever`、`MultiQueryRetriever` |
+| 长文档处理   | `ParentDocumentRetriever`                  |
+| 实时性要求高 | `TimeWeightedVectorStoreRetriever`         |
+| 需要过滤噪声 | `ContextualCompressionRetriever`           |
+
+##### 2.6.7 示例
+
+```python
+from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings  # ✅ 新导入
+from langchain_community.vectorstores import Chroma
+
+# 1. 加载文档
+loader = TextLoader("data.txt", encoding="utf-8")
+docs = loader.load()
+
+# 2. 分割文本
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=300,
+    chunk_overlap=50
+)
+splits = text_splitter.split_documents(docs)
+
+# 3. 使用 langchain-ollama 的嵌入模型
+embeddings = OllamaEmbeddings(
+    model="nomic-embed-text",
+    base_url="http://localhost:11434",
+    keep_alive=-1  # -1 表示永久保留在内存中
+)
+
+# 4. 存入向量数据库
+vectorstore = Chroma.from_documents(
+    documents=splits,
+    embedding=embeddings,
+    persist_directory="./chroma_db_nomic"
+)
+
+print("✅ 数据已使用 nomic-embed-text 嵌入并存入向量数据库！")
+
+# 5. 创建检索器
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+# 6. 查询测试
+query = "LangChain 是做什么的？"
+result = retriever.invoke(query)
+
+print(f"\n🔍 查询: {query}")
+for i, doc in enumerate(result):
+    print(f"\n--- 结果 {i+1} ---")
+    print(doc.page_content)
+
+```
 
